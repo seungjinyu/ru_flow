@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fmt::format;
 use std::fs::{self, File};
+use std::io::{self, Write};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,9 +32,9 @@ fn main() {
         Some("list") => list_experiments(),
         Some("delete") => {
             if let Some(id) = args.get(2) {
-                delete_experiment(id);
+                delbete_experiment(id);
             } else {
-                println!("Usage: cargo run -- delete <experiment_id>");
+                delete_experiment_interactive();
             }
         }
         _ => {
@@ -231,4 +232,75 @@ fn delete_experiment(id: &str) {
     } else {
         println!("No such experiment : {}", id)
     }
+}
+
+fn delete_experiment_interactive() {
+    let entries = match std::fs::read_dir("experiments") {
+        Ok(e) => e,
+        Err(_) => {
+            println!("No experiments directory found.");
+            return;
+        }
+    };
+
+    let mut experiments = vec![];
+    for entry in entries.filter_map(|e| e.ok()) {
+        let meta_path = entry.path().join("meta.json");
+        if meta_path.exists() {
+            if let Ok(file) = File::open(&meta_path) {
+                let reader = std::io::BufReader::new(file);
+                if let Ok(exp) = serde_json::from_reader::<_, Experiment>(reader) {
+                    let dir_id = entry.file_name().to_string_lossy().into_owned();
+                    experiments.push((dir_id, exp));
+                }
+            }
+        }
+    }
+
+    if experiments.is_empty() {
+        println!("No experiments to delete");
+        return;
+    }
+
+    println!("Select the experiement to delete:");
+    for (i, (id, exp)) in experiments.iter().enumerate() {
+        let status = if exp.result.is_some() {
+            "Available"
+        } else {
+            "NA"
+        };
+        println!(
+            "[{}] {} ID: {} | {} | {}",
+            i,
+            status,
+            id,
+            exp.name,
+            exp.timestamp.split('T').next().unwrap_or("")
+        );
+    }
+    print!("Enter in the number to delete : ");
+    io::stdout().flush().unwrap();
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() {
+        println!("Canceling deletion");
+        return;
+    }
+
+    match trimmed.parse::<usize>() {
+        Ok(index) if index < experiments.len() => {
+            let id = &experiments[index].0;
+            let path = format!("experiments/{}", id);
+            match fs::remove_dir_all(&path) {
+                Ok(_) => println!("Deletion complete {}", id),
+                Err(e) => println!("Deleteion failed {}", e),
+            }
+        }
+        _ => {
+            println!("Wrong input");
+        }
+    };
 }

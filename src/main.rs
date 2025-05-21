@@ -62,6 +62,8 @@ fn main() {
             println!(" run <id>     # run specific experiment");
             println!(" list         # Register new experiment");
             println!(" delete <id>  # Register new experiment");
+            println!(" logs          # Log of the experiment");
+            println!(" logs <id>     # Log of an specific experiment");
         }
     }
 }
@@ -173,17 +175,22 @@ fn run_experiment_by_id(id: &str) {
     // log file
     let log_path = format!("{}/log.txt", dir);
     let log_file = File::create(&log_path).expect("Failed to create log file");
+    let log_file_clone = log_file.try_clone().expect("Failed to clone log file");
 
-    let child = Command::new("python3")
+
+    let mut child = Command::new("python3")
         .arg("train.py")
         .args(&experiment.args)
         .current_dir(&dir)
+        .env("PYTHONUNBUFFERED", "1") 
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(log_file_clone))
         .spawn()
         .expect("Failed to run experiment");    
 
+    let lock_path = format!("{}/run.lock",dir);
     std::fs::write(&lock_path, child.id().to_string()).expect("Failed to writh run.lock");
+
     println!("Experiment {} on process PID {}", id, child.id());
 
 }

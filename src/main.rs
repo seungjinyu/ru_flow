@@ -282,11 +282,16 @@ fn run_experiment_interactive() {
     print!("Enter number to run: ");
     io::stdout().flush().unwrap();
     let mut input = String::new();
-    if let Ok(index) = input.trim().parse::<usize>() {
-        if index < experiments.len() {
-            run_experiment_by_id(&experiments[index].0);
-        } else {
-            println!("Invalid selction.");
+    io::stdin().read_line(&mut input).unwrap();
+    let trimmed = input.trim();
+
+    match trimmed.parse::<usize>() {
+        Ok(index) if index < experiments.len() => {
+            let selected_id = &experiments[index].0;
+            show_logs(selected_id);
+        }
+        _ => {
+            println!("Invalid selection");
         }
     }
 }

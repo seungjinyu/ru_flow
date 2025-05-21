@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use sysinfo::{ System};
+use sysinfo::System;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,13 +30,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(|s| s.as_str()) {
         Some("register") => register_experiment(),
-        Some("run") => {
-            if let Some(id) = args.get(2) {
-                run_experiment_by_id(id);
-            } else {
-                run_experiment();
-            }
-        }
+        Some("run") => match args.get(2) {
+            Some(id) => run_experiment_by_id(id),
+            None => run_experiment_interactive(),
+        },
         Some("list") => list_experiments(),
         Some("delete") => {
             if let Some(id) = args.get(2) {
@@ -177,22 +174,20 @@ fn run_experiment_by_id(id: &str) {
     let log_file = File::create(&log_path).expect("Failed to create log file");
     let log_file_clone = log_file.try_clone().expect("Failed to clone log file");
 
-
-    let mut child = Command::new("python3")
+    let child = Command::new("python3")
         .arg("train.py")
         .args(&experiment.args)
         .current_dir(&dir)
-        .env("PYTHONUNBUFFERED", "1") 
+        .env("PYTHONUNBUFFERED", "1")
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_clone))
         .spawn()
-        .expect("Failed to run experiment");    
+        .expect("Failed to run experiment");
 
-    let lock_path = format!("{}/run.lock",dir);
+    let lock_path = format!("{}/run.lock", dir);
     std::fs::write(&lock_path, child.id().to_string()).expect("Failed to writh run.lock");
 
     println!("Experiment {} on process PID {}", id, child.id());
-
 }
 
 fn register_experiment() {
@@ -243,74 +238,57 @@ fn find_latest_experiment() -> Option<String> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
 }
 
-fn run_experiment() {
+fn run_experiment_interactive() {
     println!("run_experiment");
     // find the latest experiment
-    let id = match find_latest_experiment() {
-        Some(id) => id,
-        None => {
-            println!("There are none");
+    let entries = match std::fs::read_dir("experiments") {
+        Ok(e) => e,
+        Err(_) => {
+            println!("No experiments directory found.");
             return;
         }
     };
-    // configure experiment directory and meta.json path lock file
-    let dir = format!("experiments/{}", id);
-    let meta_path = format!("{}/meta.json", dir);
-    let lock_path = format!("{}/run.lock", dir);
 
-    if Path::new(&lock_path).exists() {
-        if let Ok(pid_str) = std::fs::read_to_string(&lock_path) {
-            if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                if is_process_alive(pid) {
-                    println!("Experiment {} is now on (PID: {})", id, pid);
-                    return;
-                } else {
-                    println!("Previous Experiment(PID: {}) is already done", pid);
-                    std::fs::remove_file(&lock_path).ok();
+    let mut experiments = vec![];
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let meta_path = entry.path().join("meta.json");
+        if meta_path.exists() {
+            if let Ok(file) = File::open(&meta_path) {
+                let reader = BufReader::new(file);
+                if let Ok(exp) = serde_json::from_reader::<_, Experiment>(reader) {
+                    let id = entry.file_name().to_string_lossy().into_owned();
+                    experiments.push((id, exp));
                 }
             }
         }
     }
 
-    if !Path::new(&meta_path).exists() {
-        println!("There are no meta.json for {}", id);
+    if experiments.is_empty() {
+        println!("No experiments found");
         return;
     }
 
-    // read meta.json
-    let file = std::fs::File::open(&meta_path).expect("Failed to open meta.json");
-    let reader = std::io::BufReader::new(file);
-    let experiment: Experiment =
-        serde_json::from_reader(reader).expect("Failed to parse meta.json");
-
-    // open the log file
-    let log_path = format!("{}/log.txt", dir);
-    let log_file = std::fs::File::create(&log_path).expect("Faild to create log file");
-    let log_file_clone = log_file.try_clone().expect("Failed to clone log file");
-
-    // run sub porcess
-    let mut child = Command::new("python3")
-        .arg("train.py")
-        .args(&experiment.args)
-        .current_dir(&dir)
-        .env("PYTHONUNBUFFERED", "1") 
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_file_clone))
-        .spawn()
-        .expect("Failed to run python");
-    let lock_path = format!("{}/run.lock", dir);
-    std::fs::write(&lock_path, child.id().to_string()).expect("Faild to save run.lock ");
-
-    println!("Experiment {} Started PID {}", id, child.id());
-    let lock_path_clone = lock_path.clone();
-
-    std::thread::spawn(move || {
-        let _ = child.wait();
-        match std::fs::remove_file(&lock_path_clone) {
-            Ok(_) => println!("run.lock deletion completed {}", lock_path_clone),
-            Err(e) => println!("run.lock deleteion failed {}", e),
+    println!("Selet the experiment to run :");
+    for (i, (id, exp)) in experiments.iter().enumerate() {
+        println!(
+            "[{}] ID: {} | {} | {}",
+            i,
+            id,
+            exp.name,
+            exp.timestamp.split('T').next().unwrap_or("")
+        );
+    }
+    print!("Enter number to run: ");
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    if let Ok(index) = input.trim().parse::<usize>() {
+        if index < experiments.len() {
+            run_experiment_by_id(&experiments[index].0);
+        } else {
+            println!("Invalid selction.");
         }
-    });
+    }
 }
 
 // list the experiment

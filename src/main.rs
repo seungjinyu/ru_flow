@@ -288,7 +288,7 @@ fn run_experiment_interactive() {
     match trimmed.parse::<usize>() {
         Ok(index) if index < experiments.len() => {
             let selected_id = &experiments[index].0;
-            show_logs(selected_id);
+            run_experiment_by_id(selected_id);
         }
         _ => {
             println!("Invalid selection");

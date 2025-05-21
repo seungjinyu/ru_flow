@@ -45,6 +45,16 @@ fn main() {
                 delete_experiment_interactive();
             }
         }
+        Some("logs") => {
+            if let Some(id) = args.get(2) {
+                show_logs(id);
+            } else {
+                show_logs_interactive();
+            }
+        }
+        Some("status") => {
+            show_running_experiments();
+        }
         _ => {
             println!("Usage");
             println!(" register     # Register new experiment");
@@ -55,6 +65,81 @@ fn main() {
         }
     }
 }
+fn show_running_experiments() {}
+
+fn show_logs_interactive() {
+    let entries = match std::fs::read_dir("experiments") {
+        Ok(e) => e,
+        Err(_) => {
+            println!("No experiments directory found");
+            return;
+        }
+    };
+
+    let mut experiments = vec![];
+    for entry in entries.filter_map(|e| e.ok()) {
+        let meta_path = entry.path().join("meta.json");
+        if meta_path.exists() {
+            if let Ok(file) = File::open(&meta_path) {
+                let reader = BufReader::new(file);
+                if let Ok(exp) = serde_json::from_reader::<_, Experiment>(reader) {
+                    let dir_id = entry.file_name().to_string_lossy().into_owned();
+                    experiments.push((dir_id, exp));
+                }
+            }
+        }
+    }
+
+    if experiments.is_empty() {
+        println!("No experiments found");
+        return;
+    }
+
+    println!("Select the experiment to view logs:");
+    for (i, (id, exp)) in experiments.iter().enumerate() {
+        println!(
+            "[{}] ID: {} | {} | {}",
+            i,
+            id,
+            exp.name,
+            exp.timestamp.split('T').next().unwrap_or("")
+        );
+    }
+
+    print!("Enter number to view logs: ");
+    io::stdout().flush().unwrap();
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let trimmed = input.trim();
+
+    match trimmed.parse::<usize>() {
+        Ok(index) if index < experiments.len() => {
+            let selected_id = &experiments[index].0;
+            show_logs(selected_id);
+        }
+        _ => {
+            println!("Invalid selection");
+        }
+    }
+}
+fn show_logs(id: &str) {
+    let log_path = format!("experiments/{}/log.txt", id);
+
+    if !Path::new(&log_path).exists() {
+        eprintln!("No log file found for experiment {}", id);
+        return;
+    }
+    let mut child = Command::new("tail")
+        .arg("-f")
+        .arg(&log_path)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect(":Failed to run tail");
+    let _ = child.wait();
+}
+
 fn run_experiment_by_id(id: &str) {
     let dir = format!("experiments/{}", id);
     let meta_path = format!("{}/meta.json", dir);
